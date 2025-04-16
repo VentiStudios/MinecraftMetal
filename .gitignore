@@ -1,6 +1,5 @@
 # Xcode
 **/.DS_Store
-MinecraftMetal.xcodeproj
 */build/*
 *.pbxuser
 !default.pbxuser
@@ -38,3 +37,6 @@ fastlane/test_output
 # Swift Package Manager
 .swiftpm
 .xcode
+
+# Debug
+/copyBundle.sh

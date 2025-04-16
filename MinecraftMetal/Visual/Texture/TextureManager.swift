@@ -39,6 +39,7 @@ class TextureManager {
     }
     
     public static func registerAll() {
+        print(Bundle.main.executableURL!)
         registerTexture(Identifier.of("dirt"), URL(fileURLWithPath: "/Users/yizhimcqiu/Documents/MinecraftMetal/Resources/dirt.png"))
         
         registered = false
