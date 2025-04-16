@@ -17,7 +17,8 @@ class GameView: MTKView {
     
     override init(frame frameRect: CGRect, device: MTLDevice?) {
         super.init(frame: frameRect, device: device ?? MTLCreateSystemDefaultDevice())
-        self.renderer = MetalRenderer(metalView: self)
+        self.renderer = MetalRenderer(mtkView: self, textureId: Identifier.of("dirt"))
+        renderer.mtkView(self, drawableSizeWillChange: self.bounds.size)
         self.delegate = renderer
         self.framebufferOnly = false
         self.enableSetNeedsDisplay = false

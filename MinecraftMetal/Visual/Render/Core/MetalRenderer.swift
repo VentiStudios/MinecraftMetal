@@ -1,162 +1,196 @@
 import MetalKit
 
-struct Vertex {
-    var position: SIMD3<Float>  // 对应Metal中的float3
-    var color: SIMD4<Float>     // 对应Metal中的float4
-}
-
 class MetalRenderer: NSObject, MTKViewDelegate {
-    // MARK: - 核心对象
-    var device: MTLDevice!
-    var commandQueue: MTLCommandQueue!
-    var pipelineState: MTLRenderPipelineState!
-    var vertexBuffer: MTLBuffer!
-    var rotationAngle: Float = 0
-    
-    // MARK: - 初始化
-    init(metalView: MTKView) {
+    private var device: MTLDevice!
+    private var commandQueue: MTLCommandQueue!
+    private var pipelineState: MTLRenderPipelineState!
+    private var depthStencilState: MTLDepthStencilState!
+    private var vertexBuffer: MTLBuffer!
+    private var indexBuffer: MTLBuffer!
+    private var texture: MTLTexture!
+    private var rotation: Float = 0.0
+    private var textureId: Identifier!
+
+    init(mtkView: MTKView, textureId: Identifier) {
         super.init()
-        setupMetal(with: metalView)
-        setupPipeline()
-        setupVertexBuffer()
-    }
-    
-    private func setupMetal(with view: MTKView) {
-        device = view.device ?? MTLCreateSystemDefaultDevice()
-        commandQueue = device.makeCommandQueue()
-        view.delegate = self
-        view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-    }
-    
-    // MARK: - 渲染管线配置
-    private func setupPipeline() {
-        guard let library = device.makeDefaultLibrary(),
-              let vertexFunction = library.makeFunction(name: "vertexShader"),
-              let fragmentFunction = library.makeFunction(name: "fragmentShader") else {
-            fatalError("无法加载着色器")
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            fatalError("Metal is not supported on this device.")
         }
-        
-        // 顶点描述符（匹配Shader中的结构体）
+        self.device = device
+        self.textureId = textureId
+        mtkView.device = device
+        mtkView.depthStencilPixelFormat = .depth32Float
+        mtkView.colorPixelFormat = .bgra8Unorm
+        mtkView.delegate = self
+
+        setupMetal()
+        setupBuffers()
+        loadTexture()
+    }
+
+    private func setupMetal() {
+        commandQueue = device.makeCommandQueue()
+
+        let library = device.makeDefaultLibrary()
+        let vertexFunction = library?.makeFunction(name: "vertexShader")
+        let fragmentFunction = library?.makeFunction(name: "fragmentShader")
+
+        // Create a vertex descriptor
         let vertexDescriptor = MTLVertexDescriptor()
-        vertexDescriptor.attributes[0].format = .float3 // position
+        vertexDescriptor.attributes[0].format = .float3 // Position (x, y, z)
         vertexDescriptor.attributes[0].offset = 0
         vertexDescriptor.attributes[0].bufferIndex = 0
-        vertexDescriptor.attributes[1].format = .float4 // color
-        vertexDescriptor.attributes[1].offset = MemoryLayout<SIMD3<Float>>.stride
+
+        vertexDescriptor.attributes[1].format = .float2 // Texture coordinates (u, v)
+        vertexDescriptor.attributes[1].offset = MemoryLayout<Float>.size * 3
         vertexDescriptor.attributes[1].bufferIndex = 0
-        vertexDescriptor.layouts[0].stride = MemoryLayout<Vertex>.stride
-        
+
+        vertexDescriptor.layouts[0].stride = MemoryLayout<Float>.size * 5
+        vertexDescriptor.layouts[0].stepRate = 1
+        vertexDescriptor.layouts[0].stepFunction = .perVertex
+
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
         pipelineDescriptor.vertexFunction = vertexFunction
         pipelineDescriptor.fragmentFunction = fragmentFunction
-        pipelineDescriptor.vertexDescriptor = vertexDescriptor
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-        
-        do {
-            pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
-        } catch {
-            fatalError("管线创建失败: \(error)")
-        }
+        pipelineDescriptor.depthAttachmentPixelFormat = .depth32Float
+        pipelineDescriptor.vertexDescriptor = vertexDescriptor // Set the vertex descriptor
+
+        pipelineState = try! device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+
+        let depthStencilDescriptor = MTLDepthStencilDescriptor()
+        depthStencilDescriptor.depthCompareFunction = .less
+        depthStencilDescriptor.isDepthWriteEnabled = true
+        depthStencilState = device.makeDepthStencilState(descriptor: depthStencilDescriptor)
     }
-    
-    // MARK: - 立方体顶点数据
-    private func setupVertexBuffer() {
-        struct Vertex {
-            var position: SIMD3<Float>
-            var color: SIMD4<Float>
-        }
-        
-        let vertices: [Vertex] = [
-            // 前面 (z=0.5)
-            Vertex(position: [-0.5, -0.5,  0.5], color: [1, 0, 0, 1]),
-            Vertex(position: [ 0.5, -0.5,  0.5], color: [0, 1, 0, 1]),
-            Vertex(position: [ 0.5,  0.5,  0.5], color: [0, 0, 1, 1]),
-            Vertex(position: [-0.5,  0.5,  0.5], color: [1, 1, 0, 1]),
+
+    private func setupBuffers() {
+        let scale: Float = 0.5
+
+        let vertices: [Float] = [
+             1 * scale,  1 * scale, -1 * scale,  1, 0,
+            -1 * scale,  1 * scale, -1 * scale,  0, 0,
+            -1 * scale, -1 * scale, -1 * scale,  0, 1,
+             1 * scale, -1 * scale, -1 * scale,  1, 1,
             
-            // 后面 (z=-0.5)
-            Vertex(position: [-0.5, -0.5, -0.5], color: [1, 0, 1, 1]),
-            Vertex(position: [ 0.5, -0.5, -0.5], color: [0, 1, 1, 1]),
-            Vertex(position: [ 0.5,  0.5, -0.5], color: [1, 1, 1, 1]),
-            Vertex(position: [-0.5,  0.5, -0.5], color: [0, 0, 0, 1])
+             1 * scale,  1 * scale,  1 * scale,  0, 0,
+            -1 * scale,  1 * scale,  1 * scale,  1, 0,
+            -1 * scale, -1 * scale,  1 * scale,  1, 1,
+             1 * scale, -1 * scale,  1 * scale,  0, 1,
+            
+             1 * scale,  1 * scale,  1 * scale,  1, 0,
+            -1 * scale,  1 * scale,  1 * scale,  0, 0,
+            -1 * scale,  1 * scale, -1 * scale,  0, 1,
+             1 * scale,  1 * scale, -1 * scale,  1, 1,
+            
+             1 * scale, -1 * scale,  1 * scale,  1, 1,
+            -1 * scale, -1 * scale,  1 * scale,  0, 1,
+            -1 * scale, -1 * scale, -1 * scale,  0, 0,
+             1 * scale, -1 * scale, -1 * scale,  1, 0,
+            
+             1 * scale,  1 * scale,  1 * scale,  1, 0,
+             1 * scale, -1 * scale,  1 * scale,  1, 1,
+             1 * scale, -1 * scale, -1 * scale,  0, 1,
+             1 * scale,  1 * scale, -1 * scale,  0, 0,
+            
+            -1 * scale,  1 * scale,  1 * scale,  0, 0,
+            -1 * scale, -1 * scale,  1 * scale,  0, 1,
+            -1 * scale, -1 * scale, -1 * scale,  1, 1,
+            -1 * scale,  1 * scale, -1 * scale,  1, 0,
         ]
-        
-        // 立方体索引（36个顶点 = 6面×2三角形×3顶点）
+
         let indices: [UInt16] = [
-            // 前面
             0, 1, 2, 2, 3, 0,
-            // 右面
-            1, 5, 6, 6, 2, 1,
-            // 后面
-            7, 6, 5, 5, 4, 7,
-            // 左面
-            4, 0, 3, 3, 7, 4,
-            // 顶面
-            3, 2, 6, 6, 7, 3,
-            // 底面
-            4, 5, 1, 1, 0, 4
+            4, 5, 6, 6, 7, 4,
+            8, 9, 10, 10, 11, 8,
+            12, 13, 14, 14, 15, 12,
+            16, 17, 18, 18, 19, 16,
+            20, 21, 22, 22, 23, 20,
         ]
-        
-        // 创建顶点+索引缓冲区
-        vertexBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: vertices.count * MemoryLayout<Vertex>.stride,
-            options: []
-        )
+
+        vertexBuffer = device.makeBuffer(bytes: vertices, length: vertices.count * MemoryLayout<Float>.size, options: [])
+        indexBuffer = device.makeBuffer(bytes: indices, length: indices.count * MemoryLayout<UInt16>.size, options: [])
     }
-    
-    // MARK: - 渲染循环
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
-    
+
+    private func loadTexture() {
+        texture = TextureManager.getTexture(textureId!)
+    }
+
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable,
-              let renderPass = view.currentRenderPassDescriptor else { return }
-        
-        rotationAngle += 0.01
-        
-        // 创建命令缓冲区
+              let renderPassDescriptor = view.currentRenderPassDescriptor else { return }
+
         let commandBuffer = commandQueue.makeCommandBuffer()!
-        let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass)!
-        
-        // 设置管线状态
+
+        let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)!
         renderEncoder.setRenderPipelineState(pipelineState)
-        
-        // 传递顶点数据
+        renderEncoder.setDepthStencilState(depthStencilState)
         renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        
-        // 计算模型矩阵（旋转+透视）
-        var modelMatrix = matrix_float4x4()
-        modelMatrix.translate(0, 0, -3) // 移远
-        modelMatrix.rotate(angle: rotationAngle, axis: [1, 1, 0]) // 绕对角线旋转
-        renderEncoder.setVertexBytes(&modelMatrix, length: MemoryLayout<matrix_float4x4>.size, index: 1)
-        
-        // 绘制立方体（36个顶点）
-        renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
-        
+        renderEncoder.setFragmentTexture(texture, index: 0)
+
+        var modelMatrix = matrix_identity_float4x4
+        rotation += 0.02
+        modelMatrix = matrix_multiply(modelMatrix, matrix4x4_rotation(radians: rotation, axis: SIMD3<Float>(0, 1, 0)))
+
+        let viewMatrix = matrix4x4_translation(0, 0, -5) // 摄像机向后移动 5 个单位
+        let projectionMatrix = makePerspectiveMatrix(aspectRatio: Float(view.drawableSize.width / view.drawableSize.height),
+                                                     fieldOfView: .pi / 4, // 45 度视角
+                                                     near: 0.1,
+                                                     far: 100)
+
+        var modelViewProjectionMatrix = matrix_multiply(projectionMatrix, matrix_multiply(viewMatrix, modelMatrix))
+        renderEncoder.setVertexBytes(&modelViewProjectionMatrix, length: MemoryLayout<matrix_float4x4>.size, index: 1)
+
+        renderEncoder.drawIndexedPrimitives(type: .triangle, indexCount: 36, indexType: .uint16, indexBuffer: indexBuffer, indexBufferOffset: 0)
+
         renderEncoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
-}
 
-// MARK: - 矩阵扩展
-extension matrix_float4x4 {
-    mutating func translate(_ x: Float, _ y: Float, _ z: Float) {
-        self.columns.3 = [x, y, z, 1]
-    }
-    
-    mutating func rotate(angle: Float, axis: SIMD3<Float>) {
-        let c = cos(angle)
-        let s = sin(angle)
-        let t = 1 - c
-        let x = axis.x, y = axis.y, z = axis.z
-        
-        self = matrix_multiply(self, matrix_float4x4(
-            columns: (
-                [t*x*x + c,   t*x*y + z*s, t*x*z - y*s, 0],
-                [t*x*y - z*s, t*y*y + c,   t*y*z + x*s, 0],
-                [t*x*z + y*s, t*y*z - x*s, t*z*z + c,   0],
-                [0,           0,           0,           1]
-            )
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    private func makePerspectiveMatrix(aspectRatio: Float, fieldOfView: Float, near: Float, far: Float) -> matrix_float4x4 {
+        let yScale = 1 / tan(fieldOfView * 0.5)
+        let xScale = yScale / aspectRatio
+        let zRange = far - near
+        let zScale = -(far + near) / zRange
+        let wzScale = -2 * far * near / zRange
+
+        return matrix_float4x4(columns: (
+            SIMD4<Float>(xScale, 0, 0, 0),
+            SIMD4<Float>(0, yScale, 0, 0),
+            SIMD4<Float>(0, 0, zScale, -1),
+            SIMD4<Float>(0, 0, wzScale, 0)
         ))
+    }
+
+    private func matrix4x4_rotation(radians: Float, axis: SIMD3<Float>) -> matrix_float4x4 {
+        var matrix = matrix_identity_float4x4
+        let c = cos(radians)
+        let s = sin(radians)
+        let ci = 1 - c
+
+        matrix.columns.0 = SIMD4<Float>( c + axis.x * axis.x * ci,
+                                         axis.y * axis.x * ci + axis.z * s,
+                                         axis.z * axis.x * ci - axis.y * s,
+                                         0)
+        matrix.columns.1 = SIMD4<Float>( axis.x * axis.y * ci - axis.z * s,
+                                         c + axis.y * axis.y * ci,
+                                         axis.z * axis.y * ci + axis.x * s,
+                                         0)
+        matrix.columns.2 = SIMD4<Float>( axis.x * axis.z * ci + axis.y * s,
+                                         axis.y * axis.z * ci - axis.x * s,
+                                         c + axis.z * axis.z * ci,
+                                         0)
+        matrix.columns.3 = SIMD4<Float>( 0, 0, 0, 1)
+
+        return matrix
+    }
+
+    private func matrix4x4_translation(_ x: Float, _ y: Float, _ z: Float) -> matrix_float4x4 {
+        var matrix = matrix_identity_float4x4
+        matrix.columns.3 = SIMD4<Float>(x, y, z, 1)
+        return matrix
     }
 }
