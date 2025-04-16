@@ -6,6 +6,9 @@
 //
 
 import Foundation
+import Cocoa
 
-print("Hello, World!")
-
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
