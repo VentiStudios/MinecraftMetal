@@ -1,6 +1,6 @@
 # Xcode
 **/.DS_Store
-/MinecraftMetal.xcodeproj
+MinecraftMetal.xcodeproj
 */build/*
 *.pbxuser
 !default.pbxuser
